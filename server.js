@@ -6,13 +6,8 @@ const axios = require('axios');
 const crypto = require('crypto');
 const cors = require('cors');
 require('dotenv').config();
-
 const app = express();
 const port = process.env.PORT || 3000;
-
-app.listen(port, () => {
-    console.log(`Server is running on port ${port}`);
-});
 
 // Middleware
 app.use(express.json());
@@ -57,7 +52,6 @@ async function connectToRedis() {
         console.error('Failed to connect to Redis:', err);
     }
 }
-connectToRedis();
 
 // --- API Endpoints ---
 app.get('/chat/history', async (req, res) => {
@@ -93,6 +87,7 @@ app.post('/chat/clear', async (req, res) => {
     }
 });
 
+// A robust /chat endpoint
 app.post('/chat', async (req, res) => {
     const { query, sessionId } = req.body;
 
@@ -102,9 +97,18 @@ app.post('/chat', async (req, res) => {
 
     const currentSessionId = sessionId || crypto.randomBytes(16).toString('hex');
 
+    res.setHeader('Content-Type', 'text/plain');
+    res.setHeader('Transfer-Encoding', 'chunked');
+    res.setHeader('Connection', 'keep-alive');
+    res.setHeader('Cache-Control', 'no-cache');
+
     try {
-        // Step 1: Get query embedding
+        // Step 1: Get query embeddings
         const queryEmbeddings = await getJinaEmbeddings([query]);
+        if (!queryEmbeddings || queryEmbeddings.length === 0) {
+            res.status(500).end('Failed to get Jina embeddings. Please check your API key and network connection.');
+            return;
+        }
         const queryVector = queryEmbeddings[0];
 
         // Step 2: Perform a vector search in Qdrant
@@ -114,34 +118,47 @@ app.post('/chat', async (req, res) => {
             with_payload: true,
         });
 
-        const retrievedText = searchResults.map(result => result.payload.text).join('\n\n');
+        // Step 3: Handle empty search results gracefully
+        const retrievedText = searchResults && searchResults.length > 0
+            ? searchResults.map(result => result.payload.text).join('\n\n')
+            : "No relevant news articles were found in the database. Please try a different query.";
 
-        // Step 3: Construct the RAG prompt for Gemini
+        // Step 4: Construct the RAG prompt for Gemini
         const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
         const prompt = `Based on the following news articles, answer the user's question.
-        
+
         News Articles:
         ${retrievedText}
-        
+
         User's Question:
         ${query}`;
 
-        const result = await model.generateContent(prompt);
-        const responseText = await result.response.text();
+        // CORRECT: Use generateContentStream for streaming
+        const result = await model.generateContentStream({
+            contents: [{ role: 'user', parts: [{ text: prompt }] }]
+        });
 
-        // Step 4: Store history in Redis with TTL
-        const chatHistory = { user: query, bot: responseText };
-        await redisClient.rPush(`session:${currentSessionId}`, JSON.stringify(chatHistory));
-        await redisClient.expire(`session:${currentSessionId}`, 3600); // 1-hour TTL
+        let fullBotResponse = '';
 
-        res.status(200).json({ response: responseText, sessionId: currentSessionId });
+        // Process the stream and send chunks to the frontend
+        for await (const chunk of result.stream) {
+            const textChunk = chunk.text();
+            res.write(textChunk);
+            fullBotResponse += textChunk;
+        }
+
+        // Step 6: Save the full messages to Redis after the stream is complete
+        await redisClient.rPush(`session:${currentSessionId}`, JSON.stringify({ user: query }));
+        await redisClient.rPush(`session:${currentSessionId}`, JSON.stringify({ bot: fullBotResponse }));
+        await redisClient.expire(`session:${currentSessionId}`, 3600);
+
+        res.end();
     } catch (error) {
         console.error('Error in chat endpoint:', error.message);
-        res.status(500).json({ error: 'Failed to generate a response.' });
+        res.status(500).end('Failed to generate a response. Please check your API keys and configuration.');
     }
 });
 
-// Add this new route below your Express app initialization
 app.get('/', async (req, res) => {
     res.json({
         message: "Welcome to the RAG News Chatbot API! This service is running and ready to handle requests.",
@@ -153,6 +170,11 @@ app.get('/', async (req, res) => {
     });
 });
 
-app.listen(port, () => {
-    console.log(`Server is running on http://localhost:${port}`);
-});
+async function startServer() {
+    await connectToRedis();
+    app.listen(port, () => {
+        console.log(`Server is running on http://localhost:${port}`);
+    });
+}
+
+startServer();
