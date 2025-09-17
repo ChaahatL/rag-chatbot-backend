@@ -141,6 +141,18 @@ app.post('/chat', async (req, res) => {
     }
 });
 
+// Add this new route below your Express app initialization
+app.get('/', async (req, res) => {
+    res.json({
+        message: "Welcome to the RAG News Chatbot API! This service is running and ready to handle requests.",
+        endpoints: {
+            chat: "POST /chat",
+            history: "GET /chat/history",
+            clear: "POST /chat/clear"
+        }
+    });
+});
+
 app.listen(port, () => {
     console.log(`Server is running on http://localhost:${port}`);
 });
