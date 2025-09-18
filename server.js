@@ -6,6 +6,7 @@ const axios = require('axios');
 const crypto = require('crypto');
 const cors = require('cors');
 require('dotenv').config();
+
 const app = express();
 const port = process.env.PORT || 3000;
 
@@ -71,8 +72,9 @@ app.get('/chat/history', async (req, res) => {
     }
 });
 
-app.post('/chat/clear', async (req, res) => {
-    const sessionId = req.body.sessionId;
+// Endpoint to delete a specific session
+app.delete('/chat/session/:sessionId', async (req, res) => {
+    const sessionId = req.params.sessionId;
 
     if (!sessionId) {
         return res.status(400).json({ error: 'Session ID is required.' });
@@ -80,10 +82,10 @@ app.post('/chat/clear', async (req, res) => {
 
     try {
         await redisClient.del(`session:${sessionId}`);
-        res.status(200).json({ message: 'Chat history cleared successfully.' });
+        res.status(200).json({ message: `Session ${sessionId} deleted successfully.` });
     } catch (error) {
-        console.error('Error clearing chat history:', error);
-        res.status(500).json({ error: 'Failed to clear chat history.' });
+        console.error('Error deleting session:', error);
+        res.status(500).json({ error: 'Failed to delete session.' });
     }
 });
 
@@ -165,7 +167,7 @@ app.get('/', async (req, res) => {
         endpoints: {
             chat: "POST /chat",
             history: "GET /chat/history",
-            clear: "POST /chat/clear"
+            clear_session: "DELETE /chat/session/:sessionId"
         }
     });
 });
