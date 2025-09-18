@@ -1,4 +1,4 @@
-# RAG-Powered News Chatbot Backend 🚀
+# RAG-Powered News Chatbot Backend
 
 ### Overview
 
